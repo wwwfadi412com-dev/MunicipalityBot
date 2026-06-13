@@ -18,7 +18,7 @@ def run_web():
 
 # ================= الإعدادات الرئيسية للبوت =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-ADMIN_ID = 123456789  # استبدل هذا برقم الـ ID الخاص فيك يا مدير المنطقة
+ADMIN_ID = 8558896048  # استبدل هذا برقم الـ ID الخاص فيك يا مدير المنطقة
 FRAMES_DIR = 'frames'
 DB_FILE = 'database.json'
 
