@@ -265,4 +265,4 @@ def handle_photo(message):
 if __name__ == '__main__':
     threading.Thread(target=run_web).start()
     print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True, drop_pending_updates=True)
