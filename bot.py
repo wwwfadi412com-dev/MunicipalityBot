@@ -57,19 +57,32 @@ user_sessions = {}
 def start(message):
     user_id = str(message.from_user.id)
     
+    # لو المدير هو اللي دخل
     if user_id in ADMIN_IDS:
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"))
         markup.add(telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council"))
-        bot.reply_to(message, "👑 أهلاً بك يا اعلامي ادارة المنطقة!\nاختر نوع الإطار الذي تريد استخدامه:", reply_markup=markup)
+        
+        # الرسالة الجديدة اللي فيها الشرح والأزرار معاً
+        welcome_text = (
+            "👑 أهلاً بك يا مدير المنطقة في لوحة التحكم!\n\n"
+            "📌 **لإضافة رئيس بلدية، أرسل الأمر التالي:**\n"
+            "`/add [ID_رئيس_البلدية] [رقم_المجلس]`\n"
+            "(لمعرفة أرقام المجالس أرسل `/councils`)\n\n"
+            "👇 **اختر نوع الإطار الذي تريد استخدامه لصورتك:**"
+        )
+        
+        bot.reply_to(message, welcome_text, reply_markup=markup, parse_mode="Markdown")
         return
     
+    # لو رئيس بلدية مسجل
     if user_id in municipalities_db:
         council_id = municipalities_db[user_id]
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
-        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.")
+        # لو شخص غريب
+        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
 
 # عند اختيار نوع الإطار (للمدير فقط)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_'))
