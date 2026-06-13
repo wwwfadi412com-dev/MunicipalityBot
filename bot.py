@@ -5,7 +5,7 @@ import json
 import threading
 from flask import Flask
 
-# ================= إعدادات السيرفر الوهمي (عشان Render ما يعلق) =================
+# ================= إعدادات السيرفر الوهمي =================
 app = Flask(__name__)
 
 @app.route('/')
@@ -16,15 +16,16 @@ def run_web():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
-# ================= الإعدادات الرئيسية للبوت =================
+# ================= الإعدادات الرئيسية =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-ADMIN_ID = 8558896048  # استبدل هذا برقم الـ ID الخاص فيك يا مدير المنطقة
+ADMIN_ID = 8558896048 # ضع الـ ID الخاص فيك هنا
 FRAMES_DIR = 'frames'
+ADMIN_FRAMES_DIR = 'admin_frames'
 DB_FILE = 'database.json'
 
 bot = telebot.TeleBot(TOKEN)
 
-# ================= قاعدة البيانات (لحفظ الصلاحيات) =================
+# ================= قاعدة البيانات =================
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'r', encoding='utf-8') as f:
@@ -37,7 +38,7 @@ def save_db(db):
 
 municipalities_db = load_db()
 
-# ================= قراءة المجالس تلقائياً من الملفات =================
+# ================= قراءة المجالس تلقائياً =================
 COUNCILS = {}
 if os.path.exists(FRAMES_DIR):
     files = sorted([f for f in os.listdir(FRAMES_DIR) if f.endswith('.png')])
@@ -47,6 +48,9 @@ if os.path.exists(FRAMES_DIR):
 else:
     print("⚠️ خطأ: مجلد frames غير موجود!")
 
+# تخزين حالة المستخدم (ليش يختار إطار إدارة ولا مجلس)
+user_sessions = {}
+
 # ================= أوامر البوت =================
 
 @bot.message_handler(commands=['start'])
@@ -54,10 +58,10 @@ def start(message):
     user_id = str(message.from_user.id)
     
     if user_id == str(ADMIN_ID):
-        bot.reply_to(message, "👑 أهلاً بك يا مدير المنطقة في لوحة التحكم.\n\n"
-                              "لإضافة رئيس بلدية، أرسل الأمر:\n"
-                              "`/add [ID_رئيس_البلدية] [رقم_المجلس]`\n\n"
-                              "لمشاهدة أرقام المجالس، أرسل:\n`/councils`", parse_mode="Markdown")
+        markup = telebot.types.InlineKeyboardMarkup()
+        markup.add(telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"))
+        markup.add(telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council"))
+        bot.reply_to(message, "👑 أهلاً بك يا مدير المنطقة!\nاختر نوع الإطار الذي تريد استخدامه:", reply_markup=markup)
         return
     
     if user_id in municipalities_db:
@@ -65,56 +69,104 @@ def start(message):
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
-        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
+        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.")
 
-@bot.message_handler(commands=['councils'])
-def list_councils(message):
-    if str(message.from_user.id) != str(ADMIN_ID):
+# عند اختيار نوع الإطار (للمدير فقط)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mode_'))
+def handle_mode_selection(call):
+    if str(call.from_user.id) != str(ADMIN_ID):
         return
     
-    response = "📋 **قائمة المجالس وأرقامها:**\n\n"
+    mode = call.data.split('_')[1] # admin أو council
+    user_sessions[str(call.from_user.id)] = {"mode": mode, "council_id": None}
+    
+    # عرض قائمة المجالس للاختيار
+    markup = telebot.types.InlineKeyboardMarkup()
     for idx, data in COUNCILS.items():
-        response += f"`{idx}` - {data['name']}\n"
+        markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"select_{idx}"))
         
-    bot.reply_to(message, response, parse_mode="Markdown")
+    mode_text = "👑 إطارات إدارة المنطقة" if mode == "admin" else "🏛️ إطارات المجالس"
+    bot.edit_message_text(f"اخترت: {mode_text}\n\nالآن اختر المجلس/البلدة:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
+# عند اختيار المجلس (للمدير فقط)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
+def handle_council_selection(call):
+    user_id = str(call.from_user.id)
+    if user_id != str(ADMIN_ID) or user_id not in user_sessions:
+        return
+        
+    council_id = call.data.split('_')[1]
+    user_sessions[user_id]["council_id"] = council_id
+    
+    council_name = COUNCILS[council_id]["name"]
+    mode_text = "👑 إطار إدارة المنطقة" if user_sessions[user_id]["mode"] == "admin" else "🏛️ إطار المجلس"
+    
+    bot.edit_message_text(f"✅ تم الاختيار بنجاح!\n\nالمجلس: {council_name}\nنوع الإطار: {mode_text}\n\nأرسل الصورة الخام الآن.", call.message.chat.id, call.message.message_id)
+
+# أمر إضافة رؤساء البلديات
 @bot.message_handler(commands=['add'])
 def add_user(message):
     if str(message.from_user.id) != str(ADMIN_ID):
         return
-    
     try:
         parts = message.text.split()
         user_id = str(parts[1])
         council_id = parts[2]
-        
         if council_id in COUNCILS:
             municipalities_db[user_id] = council_id
             save_db(municipalities_db)
             council_name = COUNCILS[council_id]["name"]
             bot.reply_to(message, f"✅ تم إعطاء صلاحية ({council_name}) للمستخدم `{user_id}` بنجاح.", parse_mode="Markdown")
         else:
-            bot.reply_to(message, "❌ رقم المجلس غير صحيح. أرسل /councils لمعرفة الأرقام.")
+            bot.reply_to(message, "❌ رقم المجلس غير صحيح.")
     except:
-        bot.reply_to(message, "⚠️ خطأ في الصيغة. استخدم:\n/add [ID_رئيس_البلدية] [رقم_المجلس]")
+        bot.reply_to(message, "⚠️ استخدم:\n/add [ID_رئيس_البلدية] [رقم_المجلس]")
 
+# أمر عرض قائمة المجالس
+@bot.message_handler(commands=['councils'])
+def list_councils(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    response = "📋 **قائمة المجالس وأرقامها:**\n\n"
+    for idx, data in COUNCILS.items():
+        response += f"`{idx}` - {data['name']}\n"
+    bot.reply_to(message, response, parse_mode="Markdown")
+
+# معالجة الصور
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = str(message.from_user.id)
     
-    if user_id not in municipalities_db:
-        if user_id != str(ADMIN_ID):
+    # 1. معالجة صورة المدير
+    if user_id == str(ADMIN_ID):
+        if user_id not in user_sessions or user_sessions[user_id]["council_id"] is None:
+            bot.reply_to(message, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً عبر /start")
             return
+            
+        session = user_sessions[user_id]
+        council_id = session["council_id"]
+        mode = session["mode"]
+        
+        # تحديد المجلد بناءً على الاختيار
+        if mode == "admin":
+            frames_directory = ADMIN_FRAMES_DIR
+            caption_text = "✅ تفضل، الصورة جاهزة بإطار إدارة المنطقة"
         else:
-            bot.reply_to(message, "يا مدير، حسابك للإدارة فقط. أرسل الصور من حسابات رؤساء المجالس.")
-            return
-
-    council_id = municipalities_db[user_id]
-    council_data = COUNCILS.get(council_id)
-    
-    if not council_data:
-        bot.reply_to(message, "خطأ في النظام، تواصل مع المدير.")
-        return
+            frames_directory = FRAMES_DIR
+            caption_text = "✅ تفضل، الصورة جاهزة بإطار المجلس"
+            
+        council_data = COUNCILS.get(council_id)
+        
+    # 2. معالجة صورة رئيس البلدية
+    elif user_id in municipalities_db:
+        council_id = municipalities_db[user_id]
+        council_data = COUNCILS.get(council_id)
+        frames_directory = FRAMES_DIR
+        caption_text = f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}"
+        mode = "council"
+        
+    else:
+        return # شخص غريب
 
     bot.reply_to(message, "⏳ جاري معالجة الصورة...")
 
@@ -130,19 +182,22 @@ def handle_photo(message):
         
         base_image = Image.open(input_path).convert("RGBA")
         
-        frame_path = os.path.join(FRAMES_DIR, council_data["file"])
+        # تحديد مسار الإطار
+        frame_path = os.path.join(frames_directory, council_data["file"])
+        
         if os.path.exists(frame_path):
             frame = Image.open(frame_path).convert("RGBA")
             frame = frame.resize(base_image.size, Image.Resampling.LANCZOS)
             final_image = Image.alpha_composite(base_image, frame)
             final_image.convert("RGB").save(output_path, "PNG")
         else:
-            bot.reply_to(message, "❌ خطأ: ملف الإطار غير موجود.")
+            error_msg = "❌ خطأ: إطار المجلس غير موجود." if mode == "council" else "❌ خطأ: إطار إدارة المنطقة غير موجود."
+            bot.reply_to(message, error_msg)
             os.remove(input_path)
             return
             
         with open(output_path, 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption=f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}")
+            bot.send_photo(message.chat.id, photo, caption=caption_text)
             
         os.remove(input_path)
         os.remove(output_path)
@@ -150,11 +205,8 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(message, f"⚠️ حدث خطأ: {e}")
 
-# ================= تشغيل البوت والسيرفر معاً =================
+# ================= التشغيل =================
 if __name__ == '__main__':
-    # تشغيل السيرفر الوهمي في Thread (مسار منفصل) عشان ما يعلق البوت
     threading.Thread(target=run_web).start()
-    
     print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
-    # تشغيل بوت تلغرام
     bot.polling(none_stop=True)
