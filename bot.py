@@ -171,6 +171,22 @@ def list_councils(message):
     for idx, data in COUNCILS.items():
         response += f"`{idx}` - {data['name']}\n"
     bot.reply_to(message, response, parse_mode="Markdown")
+    
+@bot.message_handler(commands=['users'])
+def list_users(message):
+    if str(message.from_user.id) not in ADMIN_IDS:
+        return
+    
+    if not municipalities_db:
+        bot.reply_to(message, "لا يوجد مستخدمين مسجلين حالياً.")
+        return
+        
+    response = "📋 **قائمة المستخدمين المسجلين وصلاحياتهم:**\n\n"
+    for user_id, council_id in municipalities_db.items():
+        council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
+        response += f"👤 الـ ID: `{user_id}` \n🏛️ الصلاحية: {council_name}\n──────────────\n"
+        
+    bot.reply_to(message, response, parse_mode="Markdown")
 
 # معالجة الصور
 @bot.message_handler(content_types=['photo'])
