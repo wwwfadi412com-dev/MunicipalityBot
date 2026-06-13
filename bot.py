@@ -61,7 +61,7 @@ def start(message):
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"))
         markup.add(telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council"))
-        bot.reply_to(message, "👑 أهلاً بك يا مدير المنطقة!\nاختر نوع الإطار الذي تريد استخدامه:", reply_markup=markup)
+        bot.reply_to(message, "👑 أهلاً بك يا اعلامي ادارة المنطقة!\nاختر نوع الإطار الذي تريد استخدامه:", reply_markup=markup)
         return
     
     if user_id in municipalities_db:
