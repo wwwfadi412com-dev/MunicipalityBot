@@ -2,8 +2,21 @@ import telebot
 from PIL import Image
 import os
 import json
+import threading
+from flask import Flask
 
-# ================= الإعدادات الرئيسية =================
+# ================= إعدادات السيرفر الوهمي (عشان Render ما يعلق) =================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "بوت إدارة المنطقة يعمل بنجاح! ✅"
+
+def run_web():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# ================= الإعدادات الرئيسية للبوت =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 ADMIN_ID = 123456789  # استبدل هذا برقم الـ ID الخاص فيك يا مدير المنطقة
 FRAMES_DIR = 'frames'
@@ -25,12 +38,10 @@ def save_db(db):
 municipalities_db = load_db()
 
 # ================= قراءة المجالس تلقائياً من الملفات =================
-# البوت رح يدخل مجلد frames، ويقرأ أسماء الملفات، ويبني منها القائمة
 COUNCILS = {}
 if os.path.exists(FRAMES_DIR):
     files = sorted([f for f in os.listdir(FRAMES_DIR) if f.endswith('.png')])
     for index, filename in enumerate(files, start=1):
-        # إزالة كلمة .png من الاسم عشان يطلع اسم المجلس نظيف
         council_name = os.path.splitext(filename)[0]
         COUNCILS[str(index)] = {"name": council_name, "file": filename}
 else:
@@ -40,9 +51,8 @@ else:
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    user_id = str(message.from_user.id) # تحويل لنص عشان JSON
+    user_id = str(message.from_user.id)
     
-    # لو المدير هو اللي دخل
     if user_id == str(ADMIN_ID):
         bot.reply_to(message, "👑 أهلاً بك يا مدير المنطقة في لوحة التحكم.\n\n"
                               "لإضافة رئيس بلدية، أرسل الأمر:\n"
@@ -50,15 +60,13 @@ def start(message):
                               "لمشاهدة أرقام المجالس، أرسل:\n`/councils`", parse_mode="Markdown")
         return
     
-    # لو رئيس بلدية مسجل
     if user_id in municipalities_db:
         council_id = municipalities_db[user_id]
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
-        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة للحصول على الصلاحية.")
+        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
 
-# أمر عرض قائمة المجالس وأرقامها (للمدير فقط)
 @bot.message_handler(commands=['councils'])
 def list_councils(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -70,7 +78,6 @@ def list_councils(message):
         
     bot.reply_to(message, response, parse_mode="Markdown")
 
-# أمر إضافة رؤساء البلديات (للمدير فقط)
 @bot.message_handler(commands=['add'])
 def add_user(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -83,15 +90,14 @@ def add_user(message):
         
         if council_id in COUNCILS:
             municipalities_db[user_id] = council_id
-            save_db(municipalities_db) # حفظ في الملف
+            save_db(municipalities_db)
             council_name = COUNCILS[council_id]["name"]
             bot.reply_to(message, f"✅ تم إعطاء صلاحية ({council_name}) للمستخدم `{user_id}` بنجاح.", parse_mode="Markdown")
         else:
-            bot.reply_to(message, "❌ رقم المجلس غير صحيح. أرسل /councils لمعرفة الأرقام الصحيحة.")
+            bot.reply_to(message, "❌ رقم المجلس غير صحيح. أرسل /councils لمعرفة الأرقام.")
     except:
         bot.reply_to(message, "⚠️ خطأ في الصيغة. استخدم:\n/add [ID_رئيس_البلدية] [رقم_المجلس]")
 
-# معالجة الصور
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = str(message.from_user.id)
@@ -113,7 +119,6 @@ def handle_photo(message):
     bot.reply_to(message, "⏳ جاري معالجة الصورة...")
 
     try:
-        # تحميل الصورة
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
@@ -125,31 +130,31 @@ def handle_photo(message):
         
         base_image = Image.open(input_path).convert("RGBA")
         
-        # --- تطبيق الإطار فقط ---
         frame_path = os.path.join(FRAMES_DIR, council_data["file"])
         if os.path.exists(frame_path):
             frame = Image.open(frame_path).convert("RGBA")
-            # تكبير أو تصغير الإطار ليناسب حجم الصورة بالضبط
             frame = frame.resize(base_image.size, Image.Resampling.LANCZOS)
-            
-            # دمج الإطار فوق الصورة (هذه الطريقة الاحترافية للحفاظ على الشفافية)
             final_image = Image.alpha_composite(base_image, frame)
             final_image.convert("RGB").save(output_path, "PNG")
         else:
-            bot.reply_to(message, "❌ خطأ: ملف الإطار غير موجود في السيرفر.")
+            bot.reply_to(message, "❌ خطأ: ملف الإطار غير موجود.")
             os.remove(input_path)
             return
             
-        # إرسال الصورة
         with open(output_path, 'rb') as photo:
             bot.send_photo(message.chat.id, photo, caption=f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}")
             
-        # تنظيف الملفات المؤقتة
         os.remove(input_path)
         os.remove(output_path)
 
     except Exception as e:
-        bot.reply_to(message, f"⚠️ حدث خطأ أثناء المعالجة: {e}")
+        bot.reply_to(message, f"⚠️ حدث خطأ: {e}")
 
-print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
-bot.polling(none_stop=True)
+# ================= تشغيل البوت والسيرفر معاً =================
+if __name__ == '__main__':
+    # تشغيل السيرفر الوهمي في Thread (مسار منفصل) عشان ما يعلق البوت
+    threading.Thread(target=run_web).start()
+    
+    print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
+    # تشغيل بوت تلغرام
+    bot.polling(none_stop=True)
