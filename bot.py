@@ -18,7 +18,7 @@ def run_web():
 
 # ================= الإعدادات الرئيسية =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-ADMIN_ID = 8558896048 # ضع الـ ID الخاص فيك هنا
+ADMIN_IDS = ['8558896048', '987654321', '111222333'] # ضع الـ ID الخاص فيك هنا
 FRAMES_DIR = 'frames'
 ADMIN_FRAMES_DIR = 'admin_frames'
 DB_FILE = 'database.json'
@@ -57,7 +57,7 @@ user_sessions = {}
 def start(message):
     user_id = str(message.from_user.id)
     
-    if user_id == str(ADMIN_ID):
+    if user_id in ADMIN_IDS:
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"))
         markup.add(telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council"))
@@ -74,7 +74,7 @@ def start(message):
 # عند اختيار نوع الإطار (للمدير فقط)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_'))
 def handle_mode_selection(call):
-    if str(call.from_user.id) != str(ADMIN_ID):
+    if str(call.from_user.id) not in ADMIN_IDS:
         return
     
     mode = call.data.split('_')[1] # admin أو council
@@ -92,7 +92,7 @@ def handle_mode_selection(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
 def handle_council_selection(call):
     user_id = str(call.from_user.id)
-    if user_id != str(ADMIN_ID) or user_id not in user_sessions:
+    if user_id not in ADMIN_IDS or user_id not in user_sessions:
         return
         
     council_id = call.data.split('_')[1]
@@ -106,7 +106,7 @@ def handle_council_selection(call):
 # أمر إضافة رؤساء البلديات
 @bot.message_handler(commands=['add'])
 def add_user(message):
-    if str(message.from_user.id) != str(ADMIN_ID):
+    if str(message.from_user.id) not in ADMIN_IDS:
         return
     try:
         parts = message.text.split()
@@ -125,7 +125,7 @@ def add_user(message):
 # أمر عرض قائمة المجالس
 @bot.message_handler(commands=['councils'])
 def list_councils(message):
-    if str(message.from_user.id) != str(ADMIN_ID):
+    if str(message.from_user.id) not in ADMIN_IDS:
         return
     response = "📋 **قائمة المجالس وأرقامها:**\n\n"
     for idx, data in COUNCILS.items():
@@ -138,7 +138,7 @@ def handle_photo(message):
     user_id = str(message.from_user.id)
     
     # 1. معالجة صورة المدير
-    if user_id == str(ADMIN_ID):
+    if user_id in ADMIN_IDS:
         if user_id not in user_sessions or user_sessions[user_id]["council_id"] is None:
             bot.reply_to(message, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً عبر /start")
             return
