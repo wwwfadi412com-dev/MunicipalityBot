@@ -18,7 +18,7 @@ def run_web():
 
 # ================= الإعدادات الرئيسية =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-ADMIN_IDS = ['8558896048', '987654321', '111222333'] # ضع الـ ID الخاص فيك هنا
+ADMIN_IDS = ['8558896048', '6504296861', '111222333'] # ضع الـ ID الخاص فيك هنا
 FRAMES_DIR = 'frames'
 ADMIN_FRAMES_DIR = 'admin_frames'
 DB_FILE = 'database.json'
