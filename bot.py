@@ -134,6 +134,33 @@ def add_user(message):
             bot.reply_to(message, "❌ رقم المجلس غير صحيح.")
     except:
         bot.reply_to(message, "⚠️ استخدم:\n/add [ID_رئيس_البلدية] [رقم_المجلس]")
+@bot.message_handler(commands=['remove'])
+def remove_user(message):
+    # التأكد إن اللي يطلب الحذف هو ادمن
+    if str(message.from_user.id) not in ADMIN_IDS:
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "⚠️ صيغة خاطئة. استخدم:\n/remove [ID_رئيس_البلدية]")
+            return
+            
+        user_id = str(parts[1])
+        
+        # التحقق إذا المستخدم مسجل أصلاً
+        if user_id in municipalities_db:
+            council_name = COUNCILS.get(municipalities_db[user_id], {}).get("name", "غير معروف")
+            # حذف المستخدم من قاعدة البيانات
+            del municipalities_db[user_id]
+            # حفظ التغييرات في الملف
+            save_db(municipalities_db)
+            bot.reply_to(message, f"🗑️ تم سحب صلاحية ({council_name}) من المستخدم `{user_id}` بنجاح.", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "❌ هذا المستخدم غير مسجل في البوت أصلاً.")
+            
+    except Exception as e:
+        bot.reply_to(message, "⚠️ حدث خطأ. تأكد من الصيغة:\n/remove [ID_رئيس_البلدية]")
 
 # أمر عرض قائمة المجالس
 @bot.message_handler(commands=['councils'])
