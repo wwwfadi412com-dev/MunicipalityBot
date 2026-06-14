@@ -263,6 +263,16 @@ def handle_photo(message):
 
 # ================= التشغيل =================
 if __name__ == '__main__':
+    # تشغيل السيرفر الوهمي
     threading.Thread(target=run_web).start()
     print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
-    bot.polling(none_stop=True)
+    
+    # حلقة مفرغة تضمن عدم توقف البوت نهائياً (Self-Healing)
+    while True:
+        try:
+            bot.polling(none_stop=True)
+        except Exception as e:
+            print(f"⚠️ حصل خطأ والبوت فصل: {e}")
+            print("🔄 جاري إعادة تشغيل البوت بعد 5 ثواني...")
+            import time
+            time.sleep(5)
