@@ -60,6 +60,16 @@ else:
 
 user_sessions = {}
 
+# دالة لإعداد زر القائمة في تلغرام
+def setup_bot_commands():
+    commands = [
+        telebot.types.BotCommand("start", "فتح لوحة التحكم الرئيسية")
+    ]
+    bot.set_my_commands(commands)
+
+# استدعاء الدالة عند تشغيل البوت
+setup_bot_commands()
+
 # ================= دوال مساعدة للواجهة =================
 def get_main_menu_markup():
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
@@ -224,41 +234,56 @@ def execute_remove_admin(call):
         save_db(data_db)
         bot.edit_message_text(f"✅ تم حذف المدير `{admin_id}` من النظام بنجاح.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# ================= استقبال الرسائل النصية (لإضافة الـ ID) =================
+# ================= استقبال الرسائل النصية =================
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     user_id = str(message.from_user.id)
-    if not is_admin(user_id): return
     
-    if user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_user_id":
-        new_id = message.text.strip()
-        if not new_id.isdigit():
-            bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+    # 1. معالجة حالات الإدارة (إضافة مستخدم أو مدير)
+    if is_admin(user_id):
+        if user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_user_id":
+            new_id = message.text.strip()
+            if not new_id.isdigit():
+                bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+                return
+            
+            markup = telebot.types.InlineKeyboardMarkup()
+            for idx, data in COUNCILS.items():
+                markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"newuser_{new_id}_{idx}"))
+            markup.add(telebot.types.InlineKeyboardButton("❌ إلغاء", callback_data="back_to_main"))
+            
+            bot.reply_to(message, f"تم استلام الـ ID: `{new_id}`\nالآن اختر البلدة/المجلس لهذا المستخدم 👇", reply_markup=markup, parse_mode="Markdown")
+            user_sessions[user_id]["action"] = None
             return
-        
-        # عرض المجالس لاختيار الصلاحية
-        markup = telebot.types.InlineKeyboardMarkup()
-        for idx, data in COUNCILS.items():
-            markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"newuser_{new_id}_{idx}"))
-        markup.add(telebot.types.InlineKeyboardButton("❌ إلغاء", callback_data="back_to_main"))
-        
-        bot.reply_to(message, f"تم استلام الـ ID: `{new_id}`\nالآن اختر البلدة/المجلس لهذا المستخدم 👇", reply_markup=markup, parse_mode="Markdown")
-        user_sessions[user_id]["action"] = None # مسح حالة الانتظار
 
-    elif user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_admin_id":
-        new_admin_id = message.text.strip()
-        if not new_admin_id.isdigit():
-            bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+        elif user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_admin_id":
+            new_admin_id = message.text.strip()
+            if not new_admin_id.isdigit():
+                bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+                return
+            
+            if new_admin_id not in data_db["admins"]:
+                data_db["admins"].append(new_admin_id)
+                save_db(data_db)
+                bot.reply_to(message, f"✅ تم إضافة المدير `{new_admin_id}` بنجاح.", parse_mode="Markdown")
+            else:
+                bot.reply_to(message, "⚠️ هذا المستخدم مدير بالفعل.")
+            
+            user_sessions[user_id]["action"] = None
             return
         
-        if new_admin_id not in data_db["admins"]:
-            data_db["admins"].append(new_admin_id)
-            save_db(data_db)
-            bot.reply_to(message, f"✅ تم إضافة المدير `{new_admin_id}` بنجاح. لديه الآن صلاحيات كاملة.", parse_mode="Markdown")
+        # 🌟 إضافة جديدة: لو المدير أرسل أي كلمة ثانية، اعرض له القائمة
         else:
-            bot.reply_to(message, "⚠️ هذا المستخدم مدير بالفعل.")
-        
-        user_sessions[user_id]["action"] = None
+            bot.reply_to(message, "👑 أنت في لوحة التحكم، اختر من القائمة أدناه 👇", reply_markup=get_main_menu_markup())
+            return
+
+    # 2. معالجة رئيس البلدية (لو أرسل نص، ذكره يرسل صورة)
+    if user_id in data_db["users"]:
+        bot.reply_to(message, "🏛️ لمعالجة صورة، يرجى إرسال الصورة الخام مباشرة (وليس نصاً).")
+        return
+    
+    # 3. شخص غريب
+    bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('newuser_'))
 def save_new_user(call):
