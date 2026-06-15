@@ -18,7 +18,7 @@ def run_web():
 
 # ================= الإعدادات الرئيسية =================
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-ADMIN_IDS = ['8558896048', '6504296861', '111222333'] # ضع الـ ID الخاص فيك هنا
+INITIAL_ADMIN_IDS = ['8558896048', '6504296861'] # المدراء الأساسيين (يتم إضافتهم لأول مرة فقط)
 FRAMES_DIR = 'frames'
 ADMIN_FRAMES_DIR = 'admin_frames'
 DB_FILE = 'database.json'
@@ -29,14 +29,24 @@ bot = telebot.TeleBot(TOKEN)
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+            db = json.load(f)
+            # دمج المدراء الأساسيين مع المدراء المخزنين لضمان عدم فقدان الصلاحيات
+            admins = set(db.get("admins", []))
+            for admin_id in INITIAL_ADMIN_IDS:
+                admins.add(admin_id)
+            db["admins"] = list(admins)
+            return db
+    # هيكل قاعدة البيانات الافتراضي
+    return {"users": {}, "admins": INITIAL_ADMIN_IDS}
 
 def save_db(db):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(db, f, ensure_ascii=False, indent=4)
 
-municipalities_db = load_db()
+data_db = load_db()
+
+def is_admin(user_id):
+    return str(user_id) in data_db["admins"]
 
 # ================= قراءة المجالس تلقائياً =================
 COUNCILS = {}
@@ -48,65 +58,69 @@ if os.path.exists(FRAMES_DIR):
 else:
     print("⚠️ خطأ: مجلد frames غير موجود!")
 
-# تخزين حالة المستخدم (ليش يختار إطار إدارة ولا مجلس)
 user_sessions = {}
 
-# ================= أوامر البوت =================
+# ================= دوال مساعدة للواجهة =================
+def get_main_menu_markup():
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"),
+        telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council")
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("➕ إضافة رئيس بلدية", callback_data="dash_add_user"),
+        telebot.types.InlineKeyboardButton("🗑️ حذف رئيس بلدية", callback_data="dash_remove_user")
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("📋 المستخدمون والمجالس", callback_data="dash_view_lists"),
+        telebot.types.InlineKeyboardButton("⚙️ إدارة المدراء", callback_data="dash_manage_admins")
+    )
+    return markup
+
+# ================= أوامر البوت والواجهة =================
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = str(message.from_user.id)
     
-    # لو المدير هو اللي دخل
-    if user_id in ADMIN_IDS:
-        markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"))
-        markup.add(telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council"))
-        
-        # الرسالة الجديدة اللي فيها الشرح والأزرار معاً
-        welcome_text = (
-            "👑 أهلاً بك يا مدير المنطقة في لوحة التحكم!\n\n"
-            "📌 **لإضافة رئيس بلدية، أرسل الأمر التالي:**\n"
-            "`/add [ID_رئيس_البلدية] [رقم_المجلس]`\n"
-            "(لمعرفة أرقام المجالس أرسل `/councils`)\n\n"
-            "👇 **اختر نوع الإطار الذي تريد استخدامه لصورتك:**"
-        )
-        
-        bot.reply_to(message, welcome_text, reply_markup=markup, parse_mode="Markdown")
+    if is_admin(user_id):
+        bot.reply_to(message, "👑 أهلاً بك في لوحة تحكم إدارة المنطقة:\nاختر ما تريد من القائمة أدناه 👇", reply_markup=get_main_menu_markup())
         return
     
-    # لو رئيس بلدية مسجل
-    if user_id in municipalities_db:
-        council_id = municipalities_db[user_id]
+    if user_id in data_db["users"]:
+        council_id = data_db["users"][user_id]
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
-        # لو شخص غريب
         bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
 
-# عند اختيار نوع الإطار (للمدير فقط)
+# ================= معالجة أزرار لوحة التحكم =================
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_main')
+def back_to_main(call):
+    if not is_admin(call.from_user.id): return
+    bot.edit_message_text("👑 لوحة تحكم إدارة المنطقة:\nاختر ما تريد من القائمة أدناه 👇", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup())
+
+# 1. اختيار نوع الإطار
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_'))
 def handle_mode_selection(call):
-    if str(call.from_user.id) not in ADMIN_IDS:
-        return
+    if not is_admin(call.from_user.id): return
     
-    mode = call.data.split('_')[1] # admin أو council
-    user_sessions[str(call.from_user.id)] = {"mode": mode, "council_id": None}
+    mode = call.data.split('_')[1]
+    user_sessions[str(call.from_user.id)] = {"mode": mode, "council_id": None, "action": None}
     
-    # عرض قائمة المجالس للاختيار
     markup = telebot.types.InlineKeyboardMarkup()
     for idx, data in COUNCILS.items():
         markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"select_{idx}"))
+    markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         
     mode_text = "👑 إطارات إدارة المنطقة" if mode == "admin" else "🏛️ إطارات المجالس"
-    bot.edit_message_text(f"اخترت: {mode_text}\n\nالآن اختر المجلس/البلدة:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    bot.edit_message_text(f"اخترت: {mode_text}\n\nالآن اختر المجلس/البلدة 👇", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-# عند اختيار المجلس (للمدير فقط)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
 def handle_council_selection(call):
     user_id = str(call.from_user.id)
-    if user_id not in ADMIN_IDS or user_id not in user_sessions:
-        return
+    if not is_admin(user_id) or user_id not in user_sessions: return
         
     council_id = call.data.split('_')[1]
     user_sessions[user_id]["council_id"] = council_id
@@ -114,96 +128,165 @@ def handle_council_selection(call):
     council_name = COUNCILS[council_id]["name"]
     mode_text = "👑 إطار إدارة المنطقة" if user_sessions[user_id]["mode"] == "admin" else "🏛️ إطار المجلس"
     
-    bot.edit_message_text(f"✅ تم الاختيار بنجاح!\n\nالمجلس: {council_name}\nنوع الإطار: {mode_text}\n\nأرسل الصورة الخام الآن.", call.message.chat.id, call.message.message_id)
+    bot.edit_message_text(f"✅ تم الاختيار بنجاح!\n\nالمجلس: {council_name}\nنوع الإطار: {mode_text}\n\n📩 أرسل الصورة الخام الآن.", call.message.chat.id, call.message.message_id)
 
-# أمر إضافة رؤساء البلديات
-@bot.message_handler(commands=['add'])
-def add_user(message):
-    if str(message.from_user.id) not in ADMIN_IDS:
-        return
-    try:
-        parts = message.text.split()
-        user_id = str(parts[1])
-        council_id = parts[2]
-        if council_id in COUNCILS:
-            municipalities_db[user_id] = council_id
-            save_db(municipalities_db)
-            council_name = COUNCILS[council_id]["name"]
-            bot.reply_to(message, f"✅ تم إعطاء صلاحية ({council_name}) للمستخدم `{user_id}` بنجاح.", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, "❌ رقم المجلس غير صحيح.")
-    except:
-        bot.reply_to(message, "⚠️ استخدم:\n/add [ID_رئيس_البلدية] [رقم_المجلس]")
-@bot.message_handler(commands=['remove'])
-def remove_user(message):
-    # التأكد إن اللي يطلب الحذف هو ادمن
-    if str(message.from_user.id) not in ADMIN_IDS:
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "⚠️ صيغة خاطئة. استخدم:\n/remove [ID_رئيس_البلدية]")
-            return
-            
-        user_id = str(parts[1])
-        
-        # التحقق إذا المستخدم مسجل أصلاً
-        if user_id in municipalities_db:
-            council_name = COUNCILS.get(municipalities_db[user_id], {}).get("name", "غير معروف")
-            # حذف المستخدم من قاعدة البيانات
-            del municipalities_db[user_id]
-            # حفظ التغييرات في الملف
-            save_db(municipalities_db)
-            bot.reply_to(message, f"🗑️ تم سحب صلاحية ({council_name}) من المستخدم `{user_id}` بنجاح.", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, "❌ هذا المستخدم غير مسجل في البوت أصلاً.")
-            
-    except Exception as e:
-        bot.reply_to(message, "⚠️ حدث خطأ. تأكد من الصيغة:\n/remove [ID_رئيس_البلدية]")
+# 2. إضافة رئيس بلدية
+@bot.callback_query_handler(func=lambda call: call.data == 'dash_add_user')
+def handle_dash_add_user(call):
+    if not is_admin(call.from_user.id): return
+    user_sessions[str(call.from_user.id)] = {"action": "waiting_for_user_id"}
+    bot.edit_message_text("➕ **إضافة رئيس بلدية جديد:**\n\nأرسل الـ ID الخاص بالمستخدم (أرقام فقط):", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# أمر عرض قائمة المجالس
-@bot.message_handler(commands=['councils'])
-def list_councils(message):
-    if str(message.from_user.id) not in ADMIN_IDS:
-        return
-    response = "📋 **قائمة المجالس وأرقامها:**\n\n"
-    for idx, data in COUNCILS.items():
-        response += f"`{idx}` - {data['name']}\n"
-    bot.reply_to(message, response, parse_mode="Markdown")
-    
-@bot.message_handler(commands=['users'])
-def list_users(message):
-    if str(message.from_user.id) not in ADMIN_IDS:
-        return
-    
-    if not municipalities_db:
-        bot.reply_to(message, "لا يوجد مستخدمين مسجلين حالياً.")
+# 3. حذف رئيس بلدية
+@bot.callback_query_handler(func=lambda call: call.data == 'dash_remove_user')
+def handle_dash_remove_user(call):
+    if not is_admin(call.from_user.id): return
+    if not data_db["users"]:
+        bot.edit_message_text("لا يوجد رؤساء بلديات مسجلون حالياً.", call.message.chat.id, call.message.message_id)
         return
         
-    response = "📋 **قائمة المستخدمين المسجلين وصلاحياتهم:**\n\n"
-    for user_id, council_id in municipalities_db.items():
+    markup = telebot.types.InlineKeyboardMarkup()
+    for uid, council_id in data_db["users"].items():
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
-        response += f"👤 الـ ID: `{user_id}` \n🏛️ الصلاحية: {council_name}\n──────────────\n"
+        markup.add(telebot.types.InlineKeyboardButton(f"❌ حذف: {council_name} ({uid})", callback_data=f"deluser_{uid}"))
+    markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         
-    bot.reply_to(message, response, parse_mode="Markdown")
+    bot.edit_message_text("🗑️ **اختر المستخدم الذي تريد حذفه:**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-# معالجة الصور
+@bot.callback_query_handler(func=lambda call: call.data.startswith('deluser_'))
+def execute_remove_user(call):
+    if not is_admin(call.from_user.id): return
+    uid = call.data.split('_')[1]
+    if uid in data_db["users"]:
+        council_name = COUNCILS.get(data_db["users"][uid], {}).get("name", "غير معروف")
+        del data_db["users"][uid]
+        save_db(data_db)
+        bot.edit_message_text(f"✅ تم سحب الصلاحية من المستخدم `{uid}` ({council_name}) بنجاح.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    else:
+        bot.edit_message_text("⚠️ هذا المستخدم غير موجود.", call.message.chat.id, call.message.message_id)
+
+# 4. عرض القوائم
+@bot.callback_query_handler(func=lambda call: call.data == 'dash_view_lists')
+def handle_dash_view_lists(call):
+    if not is_admin(call.from_user.id): return
+    
+    # قائمة المجالس
+    councils_text = "📋 **أرقام المجالس:**\n\n"
+    for idx, data in COUNCILS.items():
+        councils_text += f"`{idx}` - {data['name']}\n"
+        
+    # قائمة المستخدمين
+    users_text = "\n\n📋 **رؤساء البلديات المسجلون:**\n\n"
+    if not data_db["users"]:
+        users_text += "لا يوجد مستخدمون مسجلون حالياً.\n"
+    else:
+        for uid, council_id in data_db["users"].items():
+            council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
+            users_text += f"👤 `{uid}` ◀️ {council_name}\n"
+
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    bot.edit_message_text(councils_text + users_text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+# 5. إدارة المدراء
+@bot.callback_query_handler(func=lambda call: call.data == 'dash_manage_admins')
+def handle_dash_manage_admins(call):
+    if not is_admin(call.from_user.id): return
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("➕ إضافة مدير جديد", callback_data="admin_add_step1"))
+    markup.add(telebot.types.InlineKeyboardButton("🗑️ حذف مدير", callback_data="admin_remove_list"))
+    markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    bot.edit_message_text("⚙️ **إدارة المدراء:**\n\nيمكنك إضافة أو حذف مدراء من هنا (المدراء لديهم نفس صلاحياتك).", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'admin_add_step1')
+def handle_admin_add_step1(call):
+    if not is_admin(call.from_user.id): return
+    user_sessions[str(call.from_user.id)] = {"action": "waiting_for_admin_id"}
+    bot.edit_message_text("➕ **إضافة مدير جديد:**\n\nأرسل الـ ID الخاص بالمدير (أرقام فقط):", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'admin_remove_list')
+def handle_admin_remove_list(call):
+    if not is_admin(call.from_user.id): return
+    markup = telebot.types.InlineKeyboardMarkup()
+    for admin_id in data_db["admins"]:
+        # منع المدير من حذف نفسه بالخطأ
+        if str(admin_id) != str(call.from_user.id):
+             markup.add(telebot.types.InlineKeyboardButton(f"❌ حذف: {admin_id}", callback_data=f"deladmin_{admin_id}"))
+    markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="dash_manage_admins"))
+    bot.edit_message_text("🗑️ **اختر المدير الذي تريد حذفه:**\n(لا يمكنك حذف نفسك)", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('deladmin_'))
+def execute_remove_admin(call):
+    if not is_admin(call.from_user.id): return
+    admin_id = call.data.split('_')[1]
+    if admin_id in data_db["admins"]:
+        data_db["admins"].remove(admin_id)
+        save_db(data_db)
+        bot.edit_message_text(f"✅ تم حذف المدير `{admin_id}` من النظام بنجاح.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+# ================= استقبال الرسائل النصية (لإضافة الـ ID) =================
+@bot.message_handler(func=lambda message: True)
+def handle_text_messages(message):
+    user_id = str(message.from_user.id)
+    if not is_admin(user_id): return
+    
+    if user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_user_id":
+        new_id = message.text.strip()
+        if not new_id.isdigit():
+            bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+            return
+        
+        # عرض المجالس لاختيار الصلاحية
+        markup = telebot.types.InlineKeyboardMarkup()
+        for idx, data in COUNCILS.items():
+            markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"newuser_{new_id}_{idx}"))
+        markup.add(telebot.types.InlineKeyboardButton("❌ إلغاء", callback_data="back_to_main"))
+        
+        bot.reply_to(message, f"تم استلام الـ ID: `{new_id}`\nالآن اختر البلدة/المجلس لهذا المستخدم 👇", reply_markup=markup, parse_mode="Markdown")
+        user_sessions[user_id]["action"] = None # مسح حالة الانتظار
+
+    elif user_id in user_sessions and user_sessions[user_id].get("action") == "waiting_for_admin_id":
+        new_admin_id = message.text.strip()
+        if not new_admin_id.isdigit():
+            bot.reply_to(message, "⚠️ الـ ID يجب أن يتكون من أرقام فقط! حاول مرة أخرى.")
+            return
+        
+        if new_admin_id not in data_db["admins"]:
+            data_db["admins"].append(new_admin_id)
+            save_db(data_db)
+            bot.reply_to(message, f"✅ تم إضافة المدير `{new_admin_id}` بنجاح. لديه الآن صلاحيات كاملة.", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "⚠️ هذا المستخدم مدير بالفعل.")
+        
+        user_sessions[user_id]["action"] = None
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('newuser_'))
+def save_new_user(call):
+    if not is_admin(call.from_user.id): return
+    parts = call.data.split('_')
+    new_id = parts[1]
+    council_id = parts[2]
+    
+    data_db["users"][new_id] = council_id
+    save_db(data_db)
+    council_name = COUNCILS[council_id]["name"]
+    
+    bot.edit_message_text(f"✅ تم إضافة المستخدم `{new_id}` بنجاح إلى صلاحية ({council_name}).", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+# ================= معالجة الصور =================
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = str(message.from_user.id)
     
-    # 1. معالجة صورة المدير
-    if user_id in ADMIN_IDS:
-        if user_id not in user_sessions or user_sessions[user_id]["council_id"] is None:
-            bot.reply_to(message, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً عبر /start")
+    if is_admin(user_id):
+        if user_id not in user_sessions or user_sessions[user_id].get("council_id") is None:
+            bot.reply_to(message, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً من القائمة /start")
             return
             
         session = user_sessions[user_id]
         council_id = session["council_id"]
         mode = session["mode"]
         
-        # تحديد المجلد بناءً على الاختيار
         if mode == "admin":
             frames_directory = ADMIN_FRAMES_DIR
             caption_text = "✅ تفضل، الصورة جاهزة بإطار إدارة المنطقة"
@@ -213,32 +296,30 @@ def handle_photo(message):
             
         council_data = COUNCILS.get(council_id)
         
-    # 2. معالجة صورة رئيس البلدية
-    elif user_id in municipalities_db:
-        council_id = municipalities_db[user_id]
+    elif user_id in data_db["users"]:
+        council_id = data_db["users"][user_id]
         council_data = COUNCILS.get(council_id)
         frames_directory = FRAMES_DIR
         caption_text = f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}"
         mode = "council"
         
     else:
-        return # شخص غريب
+        return
 
     bot.reply_to(message, "⏳ جاري معالجة الصورة...")
+
+    input_path = f"temp_{user_id}.jpg"
+    output_path = f"out_{user_id}.png"
 
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        
-        input_path = f"temp_{user_id}.jpg"
-        output_path = f"out_{user_id}.png"
         
         with open(input_path, 'wb') as new_file:
             new_file.write(downloaded_file)
         
         base_image = Image.open(input_path).convert("RGBA")
         
-        # تحديد مسار الإطار
         frame_path = os.path.join(frames_directory, council_data["file"])
         
         if os.path.exists(frame_path):
@@ -249,25 +330,25 @@ def handle_photo(message):
         else:
             error_msg = "❌ خطأ: إطار المجلس غير موجود." if mode == "council" else "❌ خطأ: إطار إدارة المنطقة غير موجود."
             bot.reply_to(message, error_msg)
-            os.remove(input_path)
             return
             
         with open(output_path, 'rb') as photo:
             bot.send_photo(message.chat.id, photo, caption=caption_text)
-            
-        os.remove(input_path)
-        os.remove(output_path)
 
     except Exception as e:
         bot.reply_to(message, f"⚠️ حدث خطأ: {e}")
+        
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
 # ================= التشغيل =================
 if __name__ == '__main__':
-    # تشغيل السيرفر الوهمي
     threading.Thread(target=run_web).start()
     print("🤖 بوت إدارة المنطقة الاحترافي يعمل بنجاح...")
     
-    # حلقة مفرغة تضمن عدم توقف البوت نهائياً (Self-Healing)
     while True:
         try:
             bot.polling(none_stop=True)
