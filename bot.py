@@ -93,16 +93,29 @@ def get_main_menu_markup():
 def start(message):
     user_id = str(message.from_user.id)
     
+    # لو المدير هو اللي دخل
     if is_admin(user_id):
         bot.reply_to(message, "👑 أهلاً بك في لوحة تحكم إدارة المنطقة:\nاختر ما تريد من القائمة أدناه 👇", reply_markup=get_main_menu_markup())
         return
     
+    # لو رئيس بلدية مسجل
     if user_id in data_db["users"]:
         council_id = data_db["users"][user_id]
         council_name = COUNCILS.get(council_id, {}).get("name", "غير معروف")
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
-        bot.reply_to(message, "🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\nتواصل مع إدارة المنطقة.")
+        # لو شخص غريب (ليس مدير ولا رئيس بلدية مسجل)
+        user_name = message.from_user.first_name
+        
+        # 1. إعطاء المستخدم الـ ID حقه ليرسله للإدارة
+        bot.reply_to(message, f"🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\n\n🆔 الـ ID الخاص بحسابك هو: `{user_id}`\n\n📌 أرسل هذا الرقم لإدارة المنطقة (الأخ أبو جمال) ليتم إضافتك إلى النظام.", parse_mode="Markdown")
+        
+        # 2. إرسال إشعار لكل المدراء برغبة الشخص بالدخول
+        for admin_id in data_db["admins"]:
+            try:
+                bot.send_message(admin_id, f"🔔 تنبيه: شخص جديد يحاول استخدام البوت!\n\n👤 الاسم: {user_name}\n🆔 الـ ID: `{user_id}`\n\nلإضافته اضغط /start واستخدم زر (➕ إضافة رئيس بلدية).", parse_mode="Markdown")
+            except:
+                pass # تجاهل الخطأ لو المدير لم يبدأ المحادثة مع البوت بعد
 
 # ================= معالجة أزرار لوحة التحكم =================
 
