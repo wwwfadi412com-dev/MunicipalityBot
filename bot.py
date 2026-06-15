@@ -105,18 +105,33 @@ def start(message):
         bot.reply_to(message, f"🏛️ أهلاً بك في بوت {council_name}\nأرسل الصورة الخام الآن ليتم وضع الإطار عليها.")
     else:
         # لو شخص غريب (ليس مدير ولا رئيس بلدية مسجل)
-        user_name = message.from_user.first_name
+        
+        # تجميع الاسم الكامل والمعرف
+        first_name = message.from_user.first_name or ""
+        last_name = message.from_user.last_name or ""
+        full_name = f"{first_name} {last_name}".strip()
+        if not full_name:
+            full_name = "بدون اسم"
+            
+        username = message.from_user.username
+        username_str = f"@{username}" if username else "لا يوجد معرف"
         
         # 1. إعطاء المستخدم الـ ID حقه ليرسله للإدارة
         bot.reply_to(message, f"🚫 عذراً، ليس لديك صلاحية استخدام هذا البوت.\n\n🆔 الـ ID الخاص بحسابك هو: `{user_id}`\n\n📌 أرسل هذا الرقم لإدارة المنطقة (الأخ أبو جمال) ليتم إضافتك إلى النظام.", parse_mode="Markdown")
         
-        # 2. إرسال إشعار لكل المدراء برغبة الشخص بالدخول
+        # 2. إرسال إشعار لكل المدراء برغبة الشخص بالدخول (مع التفاصيل الكاملة)
         for admin_id in data_db["admins"]:
             try:
-                bot.send_message(admin_id, f"🔔 تنبيه: شخص جديد يحاول استخدام البوت!\n\n👤 الاسم: {user_name}\n🆔 الـ ID: `{user_id}`\n\nلإضافته اضغط /start واستخدم زر (➕ إضافة رئيس بلدية).", parse_mode="Markdown")
+                alert_text = (
+                    f"🔔 تنبيه: شخص جديد يحاول استخدام البوت!\n\n"
+                    f"👤 الاسم الكامل: {full_name}\n"
+                    f"📛 المعرف: {username_str}\n"
+                    f"🆔 الـ ID: `{user_id}`\n\n"
+                    f"لإضافته اضغط /start واستخدم زر (➕ إضافة رئيس بلدية)."
+                )
+                bot.send_message(admin_id, alert_text, parse_mode="Markdown")
             except:
                 pass # تجاهل الخطأ لو المدير لم يبدأ المحادثة مع البوت بعد
-
 # ================= معالجة أزرار لوحة التحكم =================
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_main')
