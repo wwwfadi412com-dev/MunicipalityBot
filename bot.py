@@ -21,6 +21,7 @@ TOKEN = os.environ.get('TELEGRAM_TOKEN')
 INITIAL_ADMIN_IDS = ['8558896048', '6504296861'] # المدراء الأساسيين (يتم إضافتهم لأول مرة فقط)
 FRAMES_DIR = 'frames'
 ADMIN_FRAMES_DIR = 'admin_frames'
+SPECIAL_FRAME_DIR = 'special_frame' # 🌟 إضافة جديدة: مجلد القالب الخاص
 DB_FILE = 'database.json'
 
 bot = telebot.TeleBot(TOKEN)
@@ -77,6 +78,9 @@ def get_main_menu_markup():
         telebot.types.InlineKeyboardButton("👑 إطارات إدارة المنطقة", callback_data="mode_admin"),
         telebot.types.InlineKeyboardButton("🏛️ إطارات رؤساء المجالس", callback_data="mode_council")
     )
+    # 🌟 إضافة جديدة: زر القالب الخاص
+    markup.add(telebot.types.InlineKeyboardButton("🌟 قالب خاص إضافي", callback_data="mode_special"))
+    
     markup.add(
         telebot.types.InlineKeyboardButton("➕ إضافة رئيس بلدية", callback_data="dash_add_user"),
         telebot.types.InlineKeyboardButton("🗑️ حذف رئيس بلدية", callback_data="dash_remove_user")
@@ -132,6 +136,7 @@ def start(message):
                 bot.send_message(admin_id, alert_text, parse_mode="Markdown")
             except:
                 pass # تجاهل الخطأ لو المدير لم يبدأ المحادثة مع البوت بعد
+
 # ================= معالجة أزرار لوحة التحكم =================
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_main')
@@ -145,6 +150,14 @@ def handle_mode_selection(call):
     if not is_admin(call.from_user.id): return
     
     mode = call.data.split('_')[1]
+    
+    # 🌟 إضافة جديدة: معالجة زر القالب الخاص (لا يسأل عن البلدة، يطلب صورة مباشرة)
+    if mode == "special":
+        user_sessions[str(call.from_user.id)] = {"mode": "special", "council_id": "special", "action": None}
+        bot.edit_message_text("اخترت: 🌟 قالب خاص إضافي\n\n📩 أرسل الصورة الخام الآن ليتم وضع القالب عليها مباشرة.", call.message.chat.id, call.message.message_id)
+        return
+    
+    # باقي الإطارات (تسأل عن البلدة)
     user_sessions[str(call.from_user.id)] = {"mode": mode, "council_id": None, "action": None}
     
     markup = telebot.types.InlineKeyboardMarkup()
@@ -152,7 +165,7 @@ def handle_mode_selection(call):
         markup.add(telebot.types.InlineKeyboardButton(data['name'], callback_data=f"select_{idx}"))
     markup.add(telebot.types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         
-    mode_text = "👑 إطارات إدارة المنطقة" if mode == "admin" else "🏛️ إطارات المجالس"
+    mode_text = "👑 إطارات إدارة المنطقة" if mode == "admin" else "🏛️ إطارات رؤساء المجالس"
     bot.edit_message_text(f"اخترت: {mode_text}\n\nالآن اختر المجلس/البلدة 👇", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
@@ -340,15 +353,29 @@ def handle_photo(message):
         council_id = session["council_id"]
         mode = session["mode"]
         
+        # 🌟 إضافة جديدة: معالجة القالب الخاص
         if mode == "admin":
             frames_directory = ADMIN_FRAMES_DIR
             caption_text = "✅ تفضل، الصورة جاهزة بإطار إدارة المنطقة"
-        else:
+            council_data = COUNCILS.get(council_id)
+        elif mode == "special":
+            frames_directory = SPECIAL_FRAME_DIR
+            caption_text = "✅ تفضل، الصورة جاهزة بالقالب الخاص الإضافي"
+            try:
+                # جلب أول صورة موجودة في مجلد القالب الخاص
+                special_files = [f for f in os.listdir(SPECIAL_FRAME_DIR) if f.endswith('.png')]
+                if not special_files:
+                    bot.reply_to(message, "❌ خطأ: مجلد القالب الخاص فارغ!")
+                    return
+                council_data = {"name": "قالب خاص", "file": special_files[0]}
+            except Exception as e:
+                bot.reply_to(message, f"❌ خطأ في قراءة القالب الخاص: {e}")
+                return
+        else: # mode == council
             frames_directory = FRAMES_DIR
             caption_text = "✅ تفضل، الصورة جاهزة بإطار المجلس"
+            council_data = COUNCILS.get(council_id)
             
-        council_data = COUNCILS.get(council_id)
-        
     elif user_id in data_db["users"]:
         council_id = data_db["users"][user_id]
         council_data = COUNCILS.get(council_id)
@@ -381,7 +408,7 @@ def handle_photo(message):
             final_image = Image.alpha_composite(base_image, frame)
             final_image.convert("RGB").save(output_path, "PNG")
         else:
-            error_msg = "❌ خطأ: إطار المجلس غير موجود." if mode == "council" else "❌ خطأ: إطار إدارة المنطقة غير موجود."
+            error_msg = "❌ خطأ: الإطار غير موجود."
             bot.reply_to(message, error_msg)
             return
             
