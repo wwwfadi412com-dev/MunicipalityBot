@@ -4,6 +4,8 @@ import os
 import json
 import threading
 from flask import Flask
+import io
+import time
 
 # ================= إعدادات السيرفر الوهمي =================
 app = Flask(__name__)
@@ -340,56 +342,61 @@ def save_new_user(call):
     bot.edit_message_text(f"✅ تم إضافة المستخدم `{new_id}` بنجاح إلى صلاحية ({council_name}).", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
 # ================= معالجة الصور =================
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    user_id = str(message.from_user.id)
-    
+
+# 🌟 دالة تحديد الإطار المناسب حسب صلاحية المستخدم
+def resolve_frame_for(user_id):
     if is_admin(user_id):
         if user_id not in user_sessions or user_sessions[user_id].get("council_id") is None:
-            bot.reply_to(message, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً من القائمة /start")
-            return
-            
+            return None, None, None, "⚠️ يرجى اختيار نوع الإطار والمجلس أولاً من القائمة /start"
+        
         session = user_sessions[user_id]
         council_id = session["council_id"]
         mode = session["mode"]
         
-        # 🌟 إضافة جديدة: معالجة القالب الخاص
         if mode == "admin":
-            frames_directory = ADMIN_FRAMES_DIR
-            caption_text = "✅ تفضل، الصورة جاهزة بإطار إدارة المنطقة"
-            council_data = COUNCILS.get(council_id)
+            return ADMIN_FRAMES_DIR, COUNCILS.get(council_id), "✅ تفضل، الصورة جاهزة بإطار إدارة المنطقة", None
         elif mode == "special":
-            frames_directory = SPECIAL_FRAME_DIR
-            caption_text = "✅ تفضل، الصورة جاهزة بالقالب الخاص الإضافي"
             try:
-                # جلب أول صورة موجودة في مجلد القالب الخاص
                 special_files = [f for f in os.listdir(SPECIAL_FRAME_DIR) if f.endswith('.png')]
-                if not special_files:
-                    bot.reply_to(message, "❌ خطأ: مجلد القالب الخاص فارغ!")
-                    return
-                council_data = {"name": "قالب خاص", "file": special_files[0]}
-            except Exception as e:
-                bot.reply_to(message, f"❌ خطأ في قراءة القالب الخاص: {e}")
-                return
-        else: # mode == council
-            frames_directory = FRAMES_DIR
-            caption_text = "✅ تفضل، الصورة جاهزة بإطار المجلس"
-            council_data = COUNCILS.get(council_id)
+                return SPECIAL_FRAME_DIR, {"name": "قالب خاص", "file": special_files[0]}, "✅ تفضل، الصورة جاهزة بالقالب الخاص", None
+            except:
+                return None, None, None, "❌ خطأ: مجلد القالب الخاص فارغ!"
+        else:
+            return FRAMES_DIR, COUNCILS.get(council_id), "✅ تفضل، الصورة جاهزة بإطار المجلس", None
             
     elif user_id in data_db["users"]:
         council_id = data_db["users"][user_id]
         council_data = COUNCILS.get(council_id)
-        frames_directory = FRAMES_DIR
-        caption_text = f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}"
-        mode = "council"
-        
+        return FRAMES_DIR, council_data, f"✅ تفضل، الصورة جاهزة بإطار {council_data['name']}", None
+    
     else:
-        return
+        return None, None, None, None # شخص غريب، تجاهله بصمت
 
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    user_id = str(message.from_user.id)
+    
+    # التحقق من الصلاحية
+    if not (is_admin(user_id) or user_id in data_db["users"]):
+        return
+    
+    frames_directory, council_data, caption_text, error_msg = resolve_frame_for(user_id)
+    
+    if error_msg:
+        bot.reply_to(message, error_msg)
+        return
+    if frames_directory is None:
+        return
+    if not council_data:
+        bot.reply_to(message, "❌ خطأ: الإطار غير موجود.")
+        return
+    
     bot.reply_to(message, "⏳ جاري معالجة الصورة...")
 
-    input_path = f"temp_{user_id}.jpg"
-    output_path = f"out_{user_id}.png"
+    # 🌟 أسماء ملفات فريدة حسب رقم الرسالة (يمنع التعارض نهائياً عند إرسال عدة صور معاً)
+    input_path = f"temp_{message.message_id}.jpg"
+    output_path = f"out_{message.message_id}.png"
 
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
@@ -408,8 +415,7 @@ def handle_photo(message):
             final_image = Image.alpha_composite(base_image, frame)
             final_image.convert("RGB").save(output_path, "PNG")
         else:
-            error_msg = "❌ خطأ: الإطار غير موجود."
-            bot.reply_to(message, error_msg)
+            bot.reply_to(message, "❌ خطأ: الإطار غير موجود.")
             return
             
         with open(output_path, 'rb') as photo:
